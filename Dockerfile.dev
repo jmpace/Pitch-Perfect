@@ -1,0 +1,32 @@
+# Development Dockerfile for Next.js with hot reload
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Install dependencies for Playwright
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont
+
+# Tell Playwright to use the installed Chromium
+ENV PLAYWRIGHT_BROWSERS_PATH=/usr/bin/chromium-browser
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+# Copy package files
+COPY package.json package-lock.json* ./
+
+# Install all dependencies (including dev dependencies)
+RUN npm ci
+
+# Copy source code
+COPY . .
+
+# Expose the development port
+EXPOSE 3000
+
+# Start the development server
+CMD ["npm", "run", "dev"]

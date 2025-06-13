@@ -1,0 +1,8 @@
+Rendi API Reference
+
+https://docs.rendi.dev/api-reference/endpoint/run-ffmpeg-command
+https://docs.rendi.dev/api-reference/endpoint/poll-command
+https://docs.rendi.dev/api-reference/endpoint/list-commands
+https://docs.rendi.dev/api-reference/endpoint/delete-command-files
+https://docs.rendi.dev/api-reference/endpoint/list-files
+https://docs.rendi.dev/api-reference/endpoint/delete-file
