@@ -30,8 +30,8 @@ const anthropic = new Anthropic({
 // Rate limiting and request validation
 const MAX_FRAMES = 20 // Limit frames to control costs
 const MAX_TRANSCRIPT_LENGTH = 8000 // characters
-const COST_PER_1K_INPUT_TOKENS = 0.015 // Claude 4 Opus pricing
-const COST_PER_1K_OUTPUT_TOKENS = 0.075
+const COST_PER_1K_INPUT_TOKENS = 0.003 // Claude 3.5 Sonnet pricing
+const COST_PER_1K_OUTPUT_TOKENS = 0.015
 
 export async function POST(request: NextRequest) {
   const startTime = Date.now()
@@ -100,9 +100,9 @@ export async function POST(request: NextRequest) {
       contentBlocks: multimodalContent.length
     })
 
-    // Call Anthropic Claude 4 API
+    // Call Anthropic Claude 3.5 Sonnet API (using latest for rate limit compatibility)
     const response = await anthropic.messages.create({
-      model: 'claude-opus-4-20250514', // Claude 4 Opus
+      model: 'claude-3-5-sonnet-latest', // Claude 3.5 Sonnet
       max_tokens: 4000,
       temperature: 0.1, // Low temperature for consistent analysis
       system: systemPrompt,
@@ -126,7 +126,7 @@ export async function POST(request: NextRequest) {
         success: false,
         error: 'Failed to parse analysis results from Claude',
         metadata: {
-          model: 'claude-4-opus' as const,
+          model: 'claude-3-5-sonnet' as const,
           inputTokens: response.usage.input_tokens,
           outputTokens: response.usage.output_tokens,
           cost: calculateCost(response.usage.input_tokens, response.usage.output_tokens),
@@ -155,7 +155,7 @@ export async function POST(request: NextRequest) {
         cost
       },
       metadata: {
-        model: 'claude-4-opus' as const,
+        model: 'claude-3-5-sonnet' as const,
         inputTokens: response.usage.input_tokens,
         outputTokens: response.usage.output_tokens,
         cost,
@@ -171,7 +171,7 @@ export async function POST(request: NextRequest) {
       success: false,
       error: error instanceof Error ? error.message : 'Analysis failed',
       metadata: {
-        model: 'claude-4-opus' as const,
+        model: 'claude-3-5-sonnet' as const,
         inputTokens: 0,
         outputTokens: 0,
         cost: 0,
