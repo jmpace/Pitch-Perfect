@@ -48,9 +48,17 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({
         new_asset_settings: {
           playback_policy: ['public'],
-          // Ensure thumbnails/storyboards are enabled for image.mux.com URLs
-          generate_mp4: false, // We only need thumbnails, not MP4
-          normalize_audio: false // Speed up processing
+          // Always generate audio-only static renditions for consistent Whisper transcription
+          generate_mp4: false, // We only need thumbnails and audio, not MP4
+          normalize_audio: false, // Speed up processing
+          // Enable audio-only static renditions for ALL videos for consistent transcription workflow
+          // Format: M4A for better Whisper compatibility and faster processing
+          static_renditions: [
+            {
+              resolution: "audio-only",
+              format: "m4a"
+            }
+          ]
         }
       }),
     })
@@ -83,7 +91,7 @@ export async function POST(request: NextRequest) {
     // Step 2: Upload video to Mux (handle test environment gracefully)
     let videoBlob: Blob | null = null
     let uploadUrl: string | undefined
-    let playbackId: string
+    let playbackId: string = '' // Initialize to empty string
     
     try {
       const videoResponse = await fetch(videoUrl)
@@ -212,6 +220,8 @@ export async function POST(request: NextRequest) {
       frames: extractedFrames,
       frameCount: extractedFrames.length,
       cost: calculateMuxCost(extractedFrames.length),
+      // Include playback ID for large file transcription via Mux audio-only
+      muxPlaybackId: playbackId,
       metadata: {
         processingTime: 2500, // Fast Mux processing
         videoUrl,
@@ -309,11 +319,19 @@ function generateMockMuxFrames(videoDuration: number): Array<{
     const seconds = timestamp % 60
     const filename = `frame_${minutes.toString().padStart(2, '0')}m${seconds.toString().padStart(2, '0')}s.png`
     
-    // Use placeholder image service for mock frames
-    const placeholderUrl = `https://via.placeholder.com/120x68/cccccc/333333?text=Frame+${timestamp}s`
+    // Try multiple fallback approaches for better compatibility
+    // 1. SVG data URL (primary)
+    const svgContent = `<svg width="120" height="68" xmlns="http://www.w3.org/2000/svg"><rect width="120" height="68" fill="#cccccc"/><text x="60" y="38" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">${timestamp}s</text></svg>`
+    const placeholderUrl = `data:image/svg+xml;base64,${Buffer.from(svgContent).toString('base64')}`
+    
+    // 2. Alternative: URL-encoded SVG (sometimes more compatible)
+    // const placeholderUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgContent)}`
+    
+    // 3. Alternative: Simple 1x1 pixel with CSS styling (as last resort)
+    // const placeholderUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
     
     frames.push({
-      url: placeholderUrl, // Use placeholder for mock frames
+      url: placeholderUrl, // Use SVG data URL for mock frames
       timestamp,
       filename
     })
