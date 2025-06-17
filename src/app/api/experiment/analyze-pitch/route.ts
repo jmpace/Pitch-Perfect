@@ -16,6 +16,7 @@ import {
   AlignedSegment,
   AlignedPitchData
 } from '@/types/pitch-analysis'
+import { MODEL_CONFIG, getCurrentModelPricing } from '@/config/models'
 
 // Initialize Anthropic client
 const anthropicApiKey = process.env.ANTHROPIC_API_KEY
@@ -30,8 +31,8 @@ const anthropic = new Anthropic({
 // Rate limiting and request validation
 const MAX_FRAMES = 20 // Limit frames to control costs
 const MAX_TRANSCRIPT_LENGTH = 8000 // characters
-const COST_PER_1K_INPUT_TOKENS = 0.003 // Claude 3.5 Sonnet pricing
-const COST_PER_1K_OUTPUT_TOKENS = 0.015
+// Pricing is now handled by centralized config
+const modelPricing = getCurrentModelPricing()
 
 export async function POST(request: NextRequest) {
   const startTime = Date.now()
@@ -46,7 +47,7 @@ export async function POST(request: NextRequest) {
         success: false,
         error: 'Missing aligned data',
         metadata: {
-          model: 'claude-4-opus',
+          model: MODEL_CONFIG.PITCH_ANALYSIS,
           inputTokens: 0,
           outputTokens: 0,
           cost: 0,
@@ -64,7 +65,7 @@ export async function POST(request: NextRequest) {
         success: false,
         error: 'No aligned segments provided',
         metadata: {
-          model: 'claude-4-opus',
+          model: MODEL_CONFIG.PITCH_ANALYSIS,
           inputTokens: 0,
           outputTokens: 0,
           cost: 0,
@@ -102,7 +103,7 @@ export async function POST(request: NextRequest) {
 
     // Call Anthropic Claude 3.5 Sonnet API (using latest for rate limit compatibility)
     const response = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-latest', // Claude 3.5 Sonnet
+      model: MODEL_CONFIG.PITCH_ANALYSIS,
       max_tokens: 4000,
       temperature: 0.1, // Low temperature for consistent analysis
       system: systemPrompt,
@@ -126,7 +127,7 @@ export async function POST(request: NextRequest) {
         success: false,
         error: 'Failed to parse analysis results from Claude',
         metadata: {
-          model: 'claude-3-5-sonnet' as const,
+          model: MODEL_CONFIG.PITCH_ANALYSIS,
           inputTokens: response.usage.input_tokens,
           outputTokens: response.usage.output_tokens,
           cost: calculateCost(response.usage.input_tokens, response.usage.output_tokens),
@@ -155,7 +156,7 @@ export async function POST(request: NextRequest) {
         cost
       },
       metadata: {
-        model: 'claude-3-5-sonnet' as const,
+        model: MODEL_CONFIG.PITCH_ANALYSIS,
         inputTokens: response.usage.input_tokens,
         outputTokens: response.usage.output_tokens,
         cost,
@@ -171,7 +172,7 @@ export async function POST(request: NextRequest) {
       success: false,
       error: error instanceof Error ? error.message : 'Analysis failed',
       metadata: {
-        model: 'claude-3-5-sonnet' as const,
+        model: MODEL_CONFIG.PITCH_ANALYSIS,
         inputTokens: 0,
         outputTokens: 0,
         cost: 0,
@@ -430,8 +431,8 @@ function extractJsonFromResponse(text: string): any {
  * Calculate cost based on token usage
  */
 function calculateCost(inputTokens: number, outputTokens: number): number {
-  const inputCost = (inputTokens / 1000) * COST_PER_1K_INPUT_TOKENS
-  const outputCost = (outputTokens / 1000) * COST_PER_1K_OUTPUT_TOKENS
+  const inputCost = (inputTokens / 1000) * modelPricing.input
+  const outputCost = (outputTokens / 1000) * modelPricing.output
   return inputCost + outputCost
 }
 

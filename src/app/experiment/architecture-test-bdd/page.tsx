@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
+import { getCurrentModelDisplayName } from '@/config/models'
 
 // Simplified version for BDD testing
 interface ExperimentState {
@@ -165,7 +166,7 @@ export default function ArchitectureExperimentBDDPage() {
       case 'preparing':
         return `Preparing multimodal data... ${progress || 0}%`
       case 'sending':
-        return `Sending to Claude 4 Opus... ${progress || 0}%`
+        return `Sending to ${getCurrentModelDisplayName()}... ${progress || 0}%`
       case 'analyzing':
         return `Analyzing visual-verbal alignment... ${progress || 0}%`
       case 'processing':

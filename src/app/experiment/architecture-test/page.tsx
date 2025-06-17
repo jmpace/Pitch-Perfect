@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { cn } from '@/lib/utils'
 import UploadDropzone from '@/components/UploadDropzone'
+import { getCurrentModelDisplayName } from '@/config/models'
 
 // ExperimentState interface as specified with parallel processing extensions
 interface ExperimentState {
@@ -823,7 +824,7 @@ export default function ArchitectureExperimentPage() {
         }
       }
 
-      // Stage 2: Sending to Claude 4 Opus
+      // Stage 2: Sending to Claude AI
       setState(prev => ({ ...prev, pitchAnalysisProgress: 25, pitchAnalysisStage: 'sending' }))
       
       const requestPayload = { alignedData }
@@ -982,7 +983,7 @@ export default function ArchitectureExperimentPage() {
       case 'preparing':
         return `Preparing multimodal data... ${progress || 0}%`
       case 'sending':
-        return `Sending to Claude 4 Opus... ${progress || 0}%`
+        return `Sending to ${getCurrentModelDisplayName()}... ${progress || 0}%`
       case 'analyzing':
         return `Analyzing visual-verbal alignment... ${progress || 0}%`
       case 'processing':
