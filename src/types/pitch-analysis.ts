@@ -128,7 +128,7 @@ export interface PitchAnalysisApiResponse {
   data?: PitchAnalysisResponse;
   error?: string;
   metadata: {
-    model: 'claude-4-opus';
+    model: 'claude-4-opus' | 'claude-3-5-sonnet';
     inputTokens: number;
     outputTokens: number;
     cost: number;
