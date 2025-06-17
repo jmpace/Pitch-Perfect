@@ -19,7 +19,7 @@ interface ExperimentState {
   errors: ErrorInfo[]
   timings: Record<string, number>
   // Parallel processing state
-  transcriptionStage?: 'whisper_in_progress' | 'whisper_complete' | 'segmentation_in_progress' | 'segmentation_complete' | 'segmentation_failed' | 'complete'
+  transcriptionStage?: 'whisper_in_progress' | 'whisper_complete' | 'segmentation_in_progress' | 'segmentation_complete' | 'segmentation_failed' | 'complete' | 'waiting_for_dependency'
   transcriptionProgress?: number
   whisperProgress?: number
   segmentationProgress?: number
@@ -42,6 +42,10 @@ interface ExperimentState {
   pitchAnalysisRetryCount?: number
   // Mux playback ID for large file transcription
   muxPlaybackId?: string
+  // Status communication fields (Task 14)
+  transcriptionWaitingReason?: string
+  estimatedWaitTime?: number
+  dependencyStatus?: any
 }
 
 interface TranscriptSegment {
@@ -236,6 +240,20 @@ export default function ArchitectureExperimentPage() {
     } else if (section === 'transcription' && state.videoUrl) {
       handleTranscription(state.videoUrl, state.muxPlaybackId)
     } else if (section === 'segmentation' && state.videoUrl && state.fullTranscript) {
+      // Safety check: Don't retry segmentation without valid transcript
+      if (!state.fullTranscript || state.fullTranscript.trim().length === 0) {
+        console.error('❌ Cannot retry segmentation: fullTranscript is empty or undefined')
+        setState(prev => ({
+          ...prev,
+          errors: [...prev.errors, {
+            section: 'segmentation',
+            message: 'Cannot retry segmentation: No transcript available',
+            timestamp: Date.now()
+          }]
+        }))
+        return
+      }
+      
       // Retry just the segmentation stage
       setState(prev => ({
         ...prev,
@@ -283,6 +301,7 @@ export default function ArchitectureExperimentPage() {
 
   // Handle frame extraction with client-side duration extraction
   const handleFrameExtraction = async (videoUrl: string) => {
+    console.log('🎬 handleFrameExtraction started with videoUrl:', videoUrl.substring(0, 100) + '...')
     try {
       setExtractionProgress(0)
       
@@ -325,9 +344,18 @@ export default function ArchitectureExperimentPage() {
         throw new Error(errorData.error || 'Frame extraction failed')
       }
 
-      const result = await response.json()
+      console.log('📥 Frame extraction API response received, parsing JSON...')
       
-      // Debug frame extraction result
+      let result
+      try {
+        result = await response.json()
+        console.log('✅ Frame extraction JSON parsed successfully')
+      } catch (jsonError) {
+        console.error('❌ Failed to parse frame extraction JSON response:', jsonError)
+        throw new Error(`Invalid JSON response from frame extraction API: ${jsonError}`)
+      }
+      
+      // Debug frame extraction result with comprehensive logging
       console.log('🎬 Frame extraction result:', {
         frameCount: result.frames?.length || 0,
         extractionMethod: result.metadata?.extractionMethod,
@@ -335,6 +363,23 @@ export default function ArchitectureExperimentPage() {
         firstFrameType: result.frames?.[0]?.url?.startsWith('data:') ? 'data-url' : result.frames?.[0]?.url?.startsWith('https://image.mux.com') ? 'mux-thumbnail' : 'other'
       })
       
+      // Debug complete result structure
+      console.log('🔍 Complete frame extraction response:', {
+        success: result.success,
+        hasFrames: !!result.frames,
+        framesLength: result.frames?.length,
+        hasMuxPlaybackId: !!result.muxPlaybackId,
+        muxPlaybackId: result.muxPlaybackId,
+        hasMetadata: !!result.metadata,
+        allKeys: Object.keys(result)
+      })
+      
+      // Validate frame extraction result before state update
+      if (!result.frames || !Array.isArray(result.frames)) {
+        console.warn('⚠️ Frame extraction returned invalid frames data:', result.frames)
+        throw new Error('Frame extraction returned invalid frames data')
+      }
+
       // Update state with extracted frames
       setState(prev => ({
         ...prev,
@@ -347,8 +392,17 @@ export default function ArchitectureExperimentPage() {
         }
       }))
 
+      console.log('✅ Frame extraction completed, about to call checkProcessingCompletion()')
+      console.log('🔍 Frame extraction result:', {
+        framesCount: result.frames?.length || 0,
+        muxPlaybackId: result.muxPlaybackId,
+        cost: result.cost
+      })
+
       // Check if all operations are complete
+      console.log('🚀 About to call checkProcessingCompletion() after successful frame extraction')
       checkProcessingCompletion()
+      console.log('✅ checkProcessingCompletion() call completed')
 
       // Update costs (using rendiApi property name for compatibility, but showing as "Mux API")
       setCosts(prev => ({
@@ -377,7 +431,11 @@ export default function ArchitectureExperimentPage() {
     try {
       console.log('🎬 Frontend transcription start:', { 
         videoUrl: videoUrl.substring(0, 100) + '...', 
-        urlType: videoUrl.startsWith('blob:') ? 'local-blob' : videoUrl.startsWith('https://') ? 'vercel-blob' : 'unknown'
+        urlType: videoUrl.startsWith('blob:') ? 'local-blob' : videoUrl.startsWith('https://') ? 'vercel-blob' : 'unknown',
+        muxPlaybackId,
+        hasVideoUrl: !!videoUrl,
+        hasMuxPlaybackId: !!muxPlaybackId,
+        muxPlaybackIdType: typeof muxPlaybackId
       })
       
       setTranscriptionProgress(0)
@@ -406,6 +464,14 @@ export default function ArchitectureExperimentPage() {
         })
       }, 800)
 
+      console.log('🔍 Making Whisper API call with:', {
+        videoUrl: videoUrl.substring(0, 100) + '...',
+        videoDuration,
+        stage: 'whisper',
+        muxPlaybackId: muxPlaybackId || 'undefined',
+        hasMuxPlaybackId: !!muxPlaybackId
+      })
+
       const whisperResponse = await fetch('/api/experiment/transcribe', {
         method: 'POST',
         headers: {
@@ -423,15 +489,42 @@ export default function ArchitectureExperimentPage() {
       setTranscriptionProgress(100)
 
       if (!whisperResponse.ok) {
-        const errorData = await whisperResponse.json()
-        // Preserve the detailed error message for large file detection
-        const errorMessage = errorData.details || errorData.error || 'Whisper transcription failed'
-        console.log('📝 Full error response:', errorData)
-        console.log('📝 Preserving detailed error message:', errorMessage)
+        const responseData = await whisperResponse.json()
+        
+        // Check for HTTP 202 or waiting_for_dependency status (new status-based communication)
+        if (whisperResponse.status === 202 || responseData.status === 'waiting_for_dependency') {
+          console.log('⏳ Status response: Audio extraction in progress')
+          
+          // Set waiting state instead of error
+          setState(prev => ({
+            ...prev,
+            transcriptionStage: 'waiting_for_dependency',
+            transcriptionWaitingReason: 'Audio extraction in progress - will retry automatically',
+            estimatedWaitTime: 60, // More realistic estimate for Mux processing
+            dependencyStatus: responseData.dependency
+          }))
+          
+          // Trigger retry logic
+          checkProcessingCompletion()
+          return
+        }
+        
+        // Handle real errors (not status communication)
+        const errorMessage = responseData.details || responseData.error || 'Whisper transcription failed'
+        console.log('📝 Real error response:', responseData)
         throw new Error(errorMessage)
       }
 
       const whisperResult = await whisperResponse.json()
+      
+      console.log('🔍 Whisper result debug:', {
+        hasFullTranscript: !!whisperResult.fullTranscript,
+        transcriptLength: whisperResult.fullTranscript?.length || 0,
+        transcriptPreview: whisperResult.fullTranscript?.substring(0, 100) || 'undefined',
+        hasMetadata: !!whisperResult.metadata,
+        stage: whisperResult.stage,
+        success: whisperResult.success
+      })
       
       // Update with full transcript immediately
       setState(prev => ({
@@ -441,13 +534,28 @@ export default function ArchitectureExperimentPage() {
         whisperProgress: 100
       }))
 
-      // Update Whisper cost
+      // Update Whisper cost (with safety check)
       setCosts(prev => ({
         ...prev,
-        openaiWhisper: whisperResult.metadata.cost
+        openaiWhisper: whisperResult.metadata?.cost || 0
       }))
 
       // Stage 2: Segmentation processing
+      // Safety check: Don't proceed to segmentation without a valid transcript
+      if (!whisperResult.fullTranscript || whisperResult.fullTranscript.trim().length === 0) {
+        console.error('❌ Cannot proceed to segmentation: fullTranscript is empty or undefined')
+        setState(prev => ({
+          ...prev,
+          transcriptionStage: 'segmentation_failed',
+          errors: [...prev.errors, {
+            section: 'transcription',
+            message: 'Segmentation failed: No transcript available for processing',
+            timestamp: Date.now()
+          }]
+        }))
+        return
+      }
+      
       setState(prev => ({
         ...prev,
         transcriptionStage: 'segmentation_in_progress',
@@ -513,13 +621,12 @@ export default function ArchitectureExperimentPage() {
       console.error('Transcription error:', error)
       
       const errorMessage = error instanceof Error ? error.message : 'Transcription failed'
-      const isWaitingForFrames = errorMessage.includes('Large file detected') && errorMessage.includes('wait for frame extraction')
       
-      console.log('🔍 Transcription error analysis:', {
+      // Note: With status-based communication, waiting conditions should be handled
+      // by status responses, not errors. This catch block should only handle real errors.
+      console.log('🔍 Real transcription error:', {
         errorMessage,
-        isWaitingForFrames,
-        hasLargeFileDetected: errorMessage.includes('Large file detected'),
-        hasWaitForFrameExtraction: errorMessage.includes('wait for frame extraction')
+        errorType: error instanceof Error ? error.name : 'Unknown'
       })
       
       setState(prev => ({
@@ -529,31 +636,42 @@ export default function ArchitectureExperimentPage() {
           message: errorMessage,
           timestamp: Date.now()
         }],
-        transcriptionStage: isWaitingForFrames ? 'whisper_in_progress' : 'segmentation_failed',
-        // Don't count as completed operation if we're just waiting for frames
-        operationsRemaining: isWaitingForFrames ? prev.operationsRemaining : (prev.operationsRemaining || 2) - 1
+        transcriptionStage: 'segmentation_failed',
+        // Count as completed operation for real errors
+        operationsRemaining: (prev.operationsRemaining || 2) - 1
       }))
       
-      setTranscriptionProgress(isWaitingForFrames ? 50 : 0) // Show some progress if waiting
+      setTranscriptionProgress(0) // Reset progress on real errors
       checkProcessingCompletion()
     }
   }
 
   // Check if all parallel operations are complete
   const checkProcessingCompletion = () => {
+    console.log('🚀 checkProcessingCompletion() called')
     setState(prev => {
       console.log('🔍 Processing completion check:', {
         operationsRemaining: prev.operationsRemaining,
         extractedFramesCount: prev.extractedFrames.length,
         segmentedTranscriptCount: prev.segmentedTranscript.length,
         muxPlaybackId: prev.muxPlaybackId,
-        hasWaitingError: prev.errors.some(e => e.message.includes('Large file detected') && e.message.includes('wait for frame extraction'))
+        hasWaitingTranscription: prev.transcriptionStage === 'waiting_for_dependency'
       })
 
       // Check if we need to retry transcription after frames complete (regardless of operation count)
       const needsTranscriptionRetry = prev.extractedFrames.length > 0 && 
                                      prev.segmentedTranscript.length === 0 &&
-                                     prev.errors.some(e => e.message.includes('Large file detected') && e.message.includes('wait for frame extraction'))
+                                     (prev.transcriptionStage === 'waiting_for_dependency' || prev.transcriptionStage === 'segmentation_failed')
+      
+      console.log('🔍 Retry condition analysis:', {
+        needsTranscriptionRetry,
+        hasFrames: prev.extractedFrames.length > 0,
+        noTranscript: prev.segmentedTranscript.length === 0,
+        isWaitingForDependency: prev.transcriptionStage === 'waiting_for_dependency',
+        isSegmentationFailed: prev.transcriptionStage === 'segmentation_failed',
+        transcriptionStage: prev.transcriptionStage,
+        hasMuxPlaybackId: !!prev.muxPlaybackId
+      })
       
       // If frame extraction just completed and we have a waiting transcription, retry immediately
       if (needsTranscriptionRetry && prev.muxPlaybackId) {
@@ -561,23 +679,48 @@ export default function ArchitectureExperimentPage() {
         console.log('🔍 Retry conditions met:', {
           hasFrames: prev.extractedFrames.length > 0,
           noTranscript: prev.segmentedTranscript.length === 0,
-          hasWaitingError: prev.errors.some(e => e.message.includes('Large file detected') && e.message.includes('wait for frame extraction')),
+          isWaitingForDependency: prev.transcriptionStage === 'waiting_for_dependency',
           hasMuxPlaybackId: !!prev.muxPlaybackId,
           muxPlaybackId: prev.muxPlaybackId,
           videoUrl: prev.videoUrl.substring(0, 80) + '...'
         })
         
-        // Clear the waiting error before retry and don't change operationsRemaining yet
+        // Clear the waiting status before retry and don't change operationsRemaining yet
         const updatedState = {
           ...prev,
-          errors: prev.errors.filter(e => !(e.message.includes('Large file detected') && e.message.includes('wait for frame extraction')))
+          transcriptionStage: undefined, // Clear waiting status
+          transcriptionWaitingReason: undefined,
+          estimatedWaitTime: undefined,
+          dependencyStatus: undefined
         }
         
-        // Trigger the retry asynchronously
+        // Trigger the retry asynchronously  
+        console.log('⏳ Waiting 10 seconds for Mux audio-only rendition to be ready...')
+        console.log('🎯 RETRY SCHEDULED: Will retry in 10 seconds with playbackId:', prev.muxPlaybackId)
+        // Capture the values we need for retry to avoid stale closure issues
+        const retryVideoUrl = prev.videoUrl
+        const retryMuxPlaybackId = prev.muxPlaybackId
+        
         setTimeout(() => {
-          console.log('🔄 Executing automatic retry with muxPlaybackId:', prev.muxPlaybackId)
-          handleTranscription(prev.videoUrl, prev.muxPlaybackId)
-        }, 1000) // Give a moment for state to settle
+          console.log('🔄 Executing automatic retry with muxPlaybackId:', retryMuxPlaybackId)
+          console.log('🔍 Retry context:', {
+            videoUrl: retryVideoUrl?.substring(0, 100) + '...',
+            muxPlaybackId: retryMuxPlaybackId,
+            hasVideoUrl: !!retryVideoUrl,
+            hasMuxPlaybackId: !!retryMuxPlaybackId
+          })
+          
+          // Safety check: Don't retry without valid parameters
+          if (!retryVideoUrl || !retryMuxPlaybackId) {
+            console.error('❌ Cannot retry transcription: missing required parameters', {
+              hasVideoUrl: !!retryVideoUrl,
+              hasMuxPlaybackId: !!retryMuxPlaybackId
+            })
+            return
+          }
+          
+          handleTranscription(retryVideoUrl, retryMuxPlaybackId)
+        }, 10000) // Give sufficient time for Mux audio-only rendition to be ready
         
         return updatedState
       } else if (needsTranscriptionRetry && !prev.muxPlaybackId) {
@@ -585,7 +728,7 @@ export default function ArchitectureExperimentPage() {
         console.log('🔍 Current state:', {
           hasFrames: prev.extractedFrames.length > 0,
           noTranscript: prev.segmentedTranscript.length === 0,
-          hasWaitingError: prev.errors.some(e => e.message.includes('Large file detected') && e.message.includes('wait for frame extraction')),
+          isWaitingForDependency: prev.transcriptionStage === 'waiting_for_dependency',
           muxPlaybackId: prev.muxPlaybackId || 'undefined'
         })
       }
@@ -1175,10 +1318,14 @@ export default function ArchitectureExperimentPage() {
             {(state.processingStep === 'processing' || state.parallelOperationsActive) && (
               <div data-testid="transcription-progress-area" className="mt-4">
                 <div className="mb-2">
-                  <span data-testid="whisper-status-text" className="text-sm text-green-600">
-                    {state.transcriptionStage === 'segmentation_in_progress' 
-                      ? `Processing segments: ${state.segmentationProgress || 0}%`
-                      : `Transcribing audio: ${transcriptionProgress}%`
+                  <span data-testid="whisper-status-text" className={`text-sm ${
+                    state.transcriptionStage === 'waiting_for_dependency' ? 'text-blue-600' : 'text-green-600'
+                  }`}>
+                    {state.transcriptionStage === 'waiting_for_dependency' 
+                      ? `🎵 ${state.transcriptionWaitingReason || 'Audio extraction in progress'}${state.estimatedWaitTime ? ` (~${state.estimatedWaitTime}s)` : ''}`
+                      : state.transcriptionStage === 'segmentation_in_progress' 
+                        ? `Processing segments: ${state.segmentationProgress || 0}%`
+                        : `Transcribing audio: ${transcriptionProgress}%`
                     }
                   </span>
                 </div>
@@ -1416,10 +1563,14 @@ export default function ArchitectureExperimentPage() {
                 {/* Transcription Section */}
                 <div data-testid="transcription-section" className="mb-3">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm text-green-600">
-                      {state.transcriptionStage === 'segmentation_in_progress' 
-                        ? `Processing segments: ${state.segmentationProgress || 0}%`
-                        : `Transcribing audio: ${transcriptionProgress}%`
+                    <span className={`text-sm ${
+                      state.transcriptionStage === 'waiting_for_dependency' ? 'text-blue-600' : 'text-green-600'
+                    }`}>
+                      {state.transcriptionStage === 'waiting_for_dependency' 
+                        ? `🎵 ${state.transcriptionWaitingReason || 'Audio extraction in progress'}`
+                        : state.transcriptionStage === 'segmentation_in_progress' 
+                          ? `Processing segments: ${state.segmentationProgress || 0}%`
+                          : `Transcribing audio: ${transcriptionProgress}%`
                       }
                     </span>
                     {state.timeEstimates?.transcription && (

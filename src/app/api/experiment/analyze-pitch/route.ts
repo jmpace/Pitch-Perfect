@@ -290,7 +290,7 @@ async function loadPitchAnalysisPrompt(): Promise<string> {
 
 **Funding Stage Detection**: Extract funding stage from ask slide or verbal request (e.g., "pre-seed," "seed," "Series A"). Adjust evaluation expectations accordingly:
 - **Pre-seed**: Focus on founder quality, problem validation, early learning velocity
-- **Seed**: Expect some traction metrics, clearer product-market fit signals  
+- **Seed**: Expect some traction metrics, clearer product-market fit signals
 - **Series A**: Require strong traction, proven unit economics, scalable growth
 
 **Multimodal Analysis**: You will receive actual slide images alongside transcript text. Compare them carefully to identify:
@@ -300,6 +300,7 @@ async function loadPitchAnalysisPrompt(): Promise<string> {
 - Missing competitive positioning (flag if absent)
 - Slide timing issues (wrong slide displayed during speech section)
 - IMPORTANT: Do NOT suggest creating visuals that already exist in the slides - analyze what's actually shown
+- CRITICAL: If data/statistics appear ANYWHERE in frames (text, charts, graphics), visual support EXISTS - do not flag as missing
 
 **Error Handling**: If frames are unclear or transcript has gaps, work with available data and note limitations rather than guessing.
 
@@ -313,7 +314,7 @@ async function loadPitchAnalysisPrompt(): Promise<string> {
 ### Content Quality (6 Points)
 4. **problem_definition**: Clear, relatable pain point articulation
 5. **solution_clarity**: Logical value proposition and differentiation
-6. **market_validation**: Credible market sizing with supporting data
+6. **market_validation**: Credible market sizing with supporting data (score higher if visually shown)
 7. **traction_evidence**: Concrete progress indicators and customer validation
 8. **financial_projections**: Realistic revenue forecasts and unit economics
 9. **ask_clarity**: Specific funding request with clear use of funds
@@ -331,7 +332,7 @@ async function loadPitchAnalysisPrompt(): Promise<string> {
 **Individual Scores**: Rate each framework point 1-10
 - 8-10: Excellent, investor-ready
 - 6-7: Good with minor improvements needed
-- 4-5: Adequate but requires attention  
+- 4-5: Adequate but requires attention
 - 1-3: Significant improvement required
 
 **Category Scores**: Average of points within each category
@@ -343,17 +344,17 @@ Return your analysis as valid JSON in this exact structure:
 
 {
   "sessionId": "[SESSION_ID_FROM_REQUEST]",
-  "fundingStage": "[DETECTED_STAGE: pre-seed|seed|series-a]", 
+  "fundingStage": "[DETECTED_STAGE: pre-seed|seed|series-a]",
   "overallScore": [CALCULATED_WEIGHTED_AVERAGE],
   "categoryScores": {
     "speech": [AVERAGE_OF_SPEECH_POINTS],
-    "content": [AVERAGE_OF_CONTENT_POINTS], 
+    "content": [AVERAGE_OF_CONTENT_POINTS],
     "visual": [AVERAGE_OF_VISUAL_POINTS],
     "overall": [AVERAGE_OF_OVERALL_POINTS]
   },
   "individualScores": [
     // REQUIRED: Include ALL 13 framework points with these exact pointIds:
-    // Speech Mechanics: "pace_rhythm", "filler_words", "vocal_confidence"  
+    // Speech Mechanics: "pace_rhythm", "filler_words", "vocal_confidence"
     // Content Quality: "problem_definition", "solution_clarity", "market_validation", "traction_evidence", "financial_projections", "ask_clarity"
     // Visual Presentation: "slide_design", "data_visualization"
     // Overall Effectiveness: "storytelling", "executive_presence"
@@ -371,7 +372,7 @@ Return your analysis as valid JSON in this exact structure:
       "timestamp": [EXACT_TIMESTAMP_IN_SECONDS],
       "duration": [RECOMMENDED_REVIEW_DURATION],
       "category": "[speech|content|visual|overall]",
-      "priority": "[high|medium|low]", 
+      "priority": "[high|medium|low]",
       "title": "[SPECIFIC_ISSUE_TITLE]",
       "description": "[WHAT_YOU_OBSERVED_IN_VIDEO]",
       "specificIssue": "[EXACT_PROBLEM_IDENTIFIED]",
@@ -385,7 +386,7 @@ Return your analysis as valid JSON in this exact structure:
       "timestamp": [FRAME_TIMESTAMP],
       "slideImage": "[FRAME_FILENAME]",
       "contentSummary": "[WHAT_IS_SHOWN_ON_THIS_SLIDE]",
-      "designFeedback": "[VISUAL_DESIGN_ASSESSMENT]", 
+      "designFeedback": "[VISUAL_DESIGN_ASSESSMENT]",
       "alignmentWithSpeech": "[ALIGNED|MISMATCH: specific_description]",
       "improvementSuggestions": ["[SLIDE_IMPROVEMENT_1]", "[SLIDE_IMPROVEMENT_2]"],
       "score": [1-10_SLIDE_EFFECTIVENESS_SCORE]

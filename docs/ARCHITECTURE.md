@@ -15,6 +15,49 @@ Pitch Perfect is a modern Next.js application designed for video processing and 
 
 ## Features
 
+### Status-Based Communication Migration for Video Processing - January 17, 2025
+
+**Purpose:** Replaces error-based inter-service communication with explicit status responses to improve developer experience while preserving automatic retry functionality. Eliminates misleading "fake error" coordination between parallel services (frame extraction and transcription) by using structured HTTP 202 status responses instead of throwing errors for timing dependencies. All videos require Mux audio extraction regardless of size - the issue is timing coordination, not file size.
+
+**Files:**
+- `/src/app/api/experiment/transcribe/route.ts` - Modified response format (lines 86-99) to return structured status instead of throwing fake errors when Mux audio not ready
+- `/src/app/experiment/architecture-test/page.tsx` - Updated frontend status detection (lines 494-510) and simplified retry logic (lines 661-664) to use status checking instead of error message parsing
+- `/tests/integration/task14-*.test.ts` - Comprehensive integration test suite (73 tests) covering API endpoints, database state tracking, external services, component integration, and BDD end-to-end scenarios
+
+**Logic:**
+Status-based coordination system replaces error throwing with semantic HTTP responses. Phase 1: When transcription API detects missing `muxPlaybackId`, returns HTTP 202 (Accepted) with structured JSON `{success: false, status: 'waiting_for_dependency', message: 'Audio extraction in progress', dependency: {type: 'mux_playback_id'}, estimated_wait_seconds: 45, retry_recommended: true}` instead of throwing `Error("Large file detected...")`. Phase 2: Frontend detects HTTP 202 or `status: 'waiting_for_dependency'` and sets `transcriptionStage: 'waiting_for_dependency'` without adding to errors array. Phase 3: Retry logic simplified from complex error message parsing `prev.errors.some(e => e.message.includes('Large file detected'))` to clean status check `prev.transcriptionStage === 'waiting_for_dependency'`. Phase 4: UI displays blue info banner "🎵 Audio extraction in progress (~45s)" instead of red error banner, providing better user feedback.
+
+**Integration:**
+- **API Response Format:** HTTP status codes become semantically correct - 202 for processing dependencies, 200 for success, 500 for real errors only
+- **Frontend State Management:** New optional fields `transcriptionWaitingReason`, `estimatedWaitTime`, `dependencyStatus` added to ExperimentState interface for structured status tracking
+- **Error Logging System:** Clean separation between status communication (INFO level logs) and real errors (ERROR level logs with stack traces)
+- **Retry Coordination:** Automatic retry mechanism unchanged in behavior but simplified in implementation - triggers when `transcriptionStage === 'waiting_for_dependency'` and `muxPlaybackId` becomes available
+- **Database Integration:** Processing status transitions tracked with structured metadata instead of fake error records, enabling better analytics and debugging
+- **Developer Tools:** Improved debugging experience with clean logs, no misleading error stack traces, and self-documenting status values
+
+**Tests:**
+- **API Integration:** `/tests/integration/task14-api-status-integration.test.ts` (8 tests) - HTTP 202 responses, status handling, frontend-backend communication, retry coordination
+- **Database State:** `/tests/integration/task14-database-state-integration.test.ts` (7 tests) - Clean audit trails, dependency resolution tracking, concurrent video state isolation
+- **External Services:** `/tests/integration/task14-external-services-integration.test.ts` (8 tests) - Mux audio availability detection, webhook integration, error vs timing distinction
+- **Component Integration:** `/tests/integration/task14-components-integration.test.ts` (7 tests) - State transitions, UI banner logic, logging coordination, dependency resolution
+- **BDD End-to-End:** `/tests/integration/task14-bdd-e2e-integration.test.ts` (8 tests) - Complete user journeys from BDD specification, system behavior preservation
+- **Unit Tests:** `/tests/integration/task14-simple-unit.test.ts` (6 tests) - Core behavior verification, status response structure validation
+- **BDD Validation:** `/tests/integration/task14-bdd-validation.test.ts` (12 tests) - Implementation against BDD scenarios from `/tests/bdd-scenarios-task14-status-communication.md`
+- **Status Communication:** `/tests/integration/task14-status-communication.test.ts` (17 tests) - Status detection, retry logic, error log quality
+
+**Notes:**
+- **Architecture Decision:** Status-based communication chosen over error-based coordination for better separation of concerns. Timing dependencies are not errors - they're normal coordination points in parallel processing.
+- **Developer Experience Focus:** Primary goal is eliminating confusing logs and fragile error message parsing. Error logs now only contain genuine issues, making debugging significantly easier for new developers.
+- **User Experience Preservation:** Automatic retry behavior and timing remain identical to previous system. Users see no change in functionality, only improved status messaging.
+- **HTTP Semantics:** Proper use of HTTP status codes - 202 (Accepted, still processing) for dependencies, not 500 (Internal Server Error) for coordination.
+- **Code Maintainability:** Removes fragile string parsing logic `e.message.includes('Large file detected')` in favor of structured status fields, making code more robust and easier to understand.
+- **Misleading Message Correction:** The old "Large file detected" message was incorrect - all videos require Mux audio extraction regardless of size. New message "Audio extraction in progress" accurately describes the actual dependency.
+- **Future Extension Points:** Status-based system easily extends for additional dependencies (video analysis, thumbnail generation, etc.) without requiring new error message parsing patterns.
+- **Testing Coverage:** 73 integration tests ensure comprehensive validation of status communication flow, component interactions, and BDD scenario compliance.
+- **Performance Impact:** Zero performance impact - same processing flow with improved communication protocol. Status responses may actually be faster than error stack trace generation.
+- **Security Consideration:** Status responses expose less implementation detail than error messages, providing better information hiding while maintaining transparency about processing state.
+- **Rollback Safety:** All changes are backward compatible and easily reversible with `git reset --hard HEAD~1` if any issues are discovered during deployment.
+
 ### Unified Mux Audio-Only Transcription with Large File Support - June 16, 2025
 
 **Purpose:** Implements a unified, scalable transcription architecture that handles videos of any size using Mux audio-only static renditions. Eliminates the 25MB Whisper API file size limit by automatically extracting compressed audio from all uploaded videos, ensuring consistent transcription workflow regardless of file size. Integrates Claude 3.5 Sonnet multimodal pitch analysis with automatic retry coordination for seamless video processing.

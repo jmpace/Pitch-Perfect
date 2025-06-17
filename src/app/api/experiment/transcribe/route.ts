@@ -81,7 +81,22 @@ async function handleMuxAudioTranscription(videoUrl: string, videoDuration: numb
     // If no playback ID available, this means frame extraction is still in progress
     // For parallel processing, we should delay transcription until frames are ready
     console.log(`⏳ No playback ID available - frame extraction likely in progress`)
-    throw new Error(`Large file detected - please wait for frame extraction to complete, then retry transcription. The system will automatically use Mux audio-only compression.`)
+    
+    // Return structured status response instead of throwing fake error
+    return NextResponse.json({
+      success: false,
+      status: 'waiting_for_dependency',
+      message: 'Audio extraction in progress',
+      dependency: {
+        type: 'mux_playback_id',
+        required_for: 'audio_file_access',
+        description: 'Waiting for Mux to process audio-only static rendition'
+      },
+      estimated_wait_seconds: 45,
+      retry_recommended: true,
+      current_step: 'audio_extraction_in_progress',
+      progress_percentage: 25
+    }, { status: 202 }) // HTTP 202 Accepted - request is being processed
   }
   
   console.log(`✅ Using Mux playback ID: ${playbackId}`)
